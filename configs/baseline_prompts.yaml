@@ -1,0 +1,120 @@
+# Baseline prompt set for Phase 1 reference videos.
+# Each entry targets a distinct motion profile to stress different temporal-attention patterns.
+#
+# motion_profile (for later analysis):
+#   global_motion   — camera / scene-scale flow (long-range temporal)
+#   object_motion   — articulated bodies and rigid objects (local temporal + spatial)
+#   fluid_periodic  — repetitive medium-range dynamics (waves, flags, smoke)
+#   slow_discrete   — sparse, frame-to-frame changes (short-range coherence)
+#   near_static     — minimal motion control baseline
+
+generation:
+  num_frames: 49
+  num_inference_steps: 50
+  guidance_scale: 6.0
+  fps: 8
+  negative_prompt: "low quality, blurry, distorted, jittery, flickering, watermark, text"
+
+prompts:
+  # --- global_motion ---
+  - id: drone_city
+    category: global_motion
+    motion_profile: global_motion
+    text: >-
+      Drone shot flying over a futuristic neon-lit cyberpunk city at night in the rain.
+      The camera swoops downward between towering skyscrapers with glowing billboards
+      and flying vehicles passing below. Cinematic lighting, photorealistic, highly detailed.
+
+  - id: highway_drive
+    category: global_motion
+    motion_profile: global_motion
+    text: >-
+      Forward-facing dashcam view of a car driving fast on a multi-lane highway at golden hour.
+      Road markings and guardrails rush toward the camera, other cars pass on the left.
+      Smooth motion, realistic perspective, sharp details.
+
+  - id: coast_pan
+    category: global_motion
+    motion_profile: global_motion
+    text: >-
+      Slow cinematic pan from left to right across a rugged coastline at sunset.
+      Waves roll onto rocks, seabirds glide in the distance, warm orange light on the water.
+      Steady camera movement, photorealistic.
+
+  # --- object_motion ---
+  - id: walk_park
+    category: object_motion
+    motion_profile: object_motion
+    text: >-
+      A person walking steadily along a tree-lined path in a sunny city park.
+      Full body visible, natural gait, leaves casting soft shadows on the ground.
+      Stable camera, realistic motion.
+
+  - id: dance_spotlight
+    category: object_motion
+    motion_profile: object_motion
+    text: >-
+      A solo dancer performing contemporary moves under a single spotlight on a dark stage.
+      Arms and legs move fluidly, body rotates and jumps, dramatic shadows on the floor.
+      Fixed camera, high contrast.
+
+  - id: dog_fetch
+    category: object_motion
+    motion_profile: object_motion
+    text: >-
+      A golden retriever running across a grassy field to fetch a ball, then turning back.
+      Ears flapping, tail wagging, sunny afternoon light. Side-view camera, sharp focus on the dog.
+
+  # --- fluid_periodic ---
+  - id: ocean_waves
+    category: fluid_periodic
+    motion_profile: fluid_periodic
+    text: >-
+      Ocean waves crashing onto a sandy beach on an overcast day.
+      White foam rolls up the shore and retreats, seagulls walk at the waterline.
+      Static wide shot, natural rhythmic motion.
+
+  - id: flag_wind
+    category: fluid_periodic
+    motion_profile: fluid_periodic
+    text: >-
+      A bright red flag waving vigorously in strong wind against a clear blue sky.
+      Fabric ripples and folds continuously, pole slightly bending. Low-angle static shot.
+
+  - id: campfire_smoke
+    category: fluid_periodic
+    motion_profile: fluid_periodic
+    text: >-
+      Close-up of a campfire at night with orange flames flickering and grey smoke rising upward.
+      Embers glow, smoke curls and dissipates into the dark background. Fixed camera.
+
+  # --- slow_discrete ---
+  - id: leaves_falling
+    category: slow_discrete
+    motion_profile: slow_discrete
+    text: >-
+      Autumn leaves falling slowly from a large oak tree in a quiet park.
+      Individual leaves drift and spin downward, some landing on grass. Soft daylight, static camera.
+
+  - id: snowfall_street
+    category: slow_discrete
+    motion_profile: slow_discrete
+    text: >-
+      Gentle snowfall over a quiet European street with warm lights in shop windows.
+      Snowflakes drift down, a few pedestrians walk slowly with umbrellas. Static wide shot.
+
+  - id: candle_flame
+    category: slow_discrete
+    motion_profile: slow_discrete
+    text: >-
+      Extreme close-up of a single candle flame flickering in a dark room.
+      Wax pool shimmers, soft bokeh in the background. Minimal camera movement.
+
+  # --- near_static control ---
+  - id: still_lake
+    category: near_static
+    motion_profile: near_static
+    text: >-
+      Perfectly still mountain lake at dawn reflecting pine trees and snow peaks.
+      Only tiny ripples disturb the mirror surface, mist hovering above the water.
+      Locked-off tripod shot, serene and almost motionless.
