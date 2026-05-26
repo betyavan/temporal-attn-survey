@@ -1,4 +1,4 @@
-.PHONY: export infer train docker docker-push check refactor lint show install black mdformat yamlfix mypy pylint mdlint test clean docs docs-serve
+.PHONY: docker docker-push check refactor lint show install black mdformat yamlfix mypy ruff-lint ruff-fix mdlint yamllint smoke-test test clean dvc-init hf-cache-init
 
 tag ?= latest
 image ?= $(notdir $(shell pwd))
@@ -16,53 +16,52 @@ refactor: black mdformat yamlfix ruff-fix
 lint: mypy mdlint ruff-lint yamllint
 
 show:
-	poetry run python --version && poetry show
-
-prepare-environment:
-	pip install -U pip
-	pip install virtualenv
-	virtualenv .venv
-	. .venv/bin/activate && pip install -U pip && pip install poetry && poetry config virtualenvs.create false
+	uv run python --version && uv pip list
 
 install:
-	poetry install --no-root
+	uv sync
 
 dvc-init:
-	dvc init
+	uv run dvc init
+
+hf-cache-init:
+	mkdir -p /tmp/hf_cache/hub /tmp/hf_cache/datasets
+	@echo "HF cache prepared at /tmp/hf_cache"
+	@echo "Activate it in your shell:  source ./set_cache_env.sh"
 
 find_all_py = `find . -type f -name '*.py' | grep -v .venv | sort | uniq`
 find_all_md = `find . -type f -name '*.md' | grep -v .venv | sort | uniq`
 find_all_yaml = `find . -type f \( -iname \*.yaml -o -iname \*.yml \) | grep -v .venv | sort | uniq`
 
 black:
-	poetry run black $(find_all_py)
+	uv run black $(find_all_py)
 
 mdformat:
-	poetry run mdformat $(find_all_md)
+	uv run mdformat $(find_all_md)
 
 yamlfix:
-	poetry run yamlfix $(find_all_yaml)
+	uv run yamlfix $(find_all_yaml)
 
 yamllint:
-	poetry run yamlfix --check $(find_all_yaml)
+	uv run yamlfix --check $(find_all_yaml)
 
 mypy:
-	poetry run mypy --strict $(find_all_py) && rm -rf .mypy_cache
+	uv run mypy --strict $(find_all_py) && rm -rf .mypy_cache
 
 ruff-lint:
-	poetry run ruff check $(find_all_py)
+	uv run ruff check $(find_all_py)
 
 ruff-fix:
-	poetry run ruff check --fix $(find_all_py)
+	uv run ruff check --fix $(find_all_py)
 
 mdlint:
-	poetry run mdformat --check $(find_all_md)
+	uv run mdformat --check $(find_all_md)
 
 smoke-test:
-	poetry run pytest -vv -m fast tests && rm -rf .pytest_cache
+	uv run pytest -vv -m fast tests && rm -rf .pytest_cache
 
 test:
-	poetry run pytest -vv  tests && rm -rf .pytest_cache
+	uv run pytest -vv tests && rm -rf .pytest_cache
 
 clean:
-	poetry run pyclean . && rm -rf __pycache__ && rm -rf *.egg-info && rm -rf build && rm -rf dist && rm -rf .pytest_cache && rm -rf .mypy_cache
+	uv run pyclean . && rm -rf __pycache__ && rm -rf *.egg-info && rm -rf build && rm -rf dist && rm -rf .pytest_cache && rm -rf .mypy_cache

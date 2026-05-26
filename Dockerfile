@@ -1,6 +1,6 @@
 FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 ARG DEBIAN_FRONTEND=noninteractive
-WORKDIR /root
+WORKDIR /workspace
 
 # Install some basic utilities
 RUN apt-get update && apt-get install -y \
@@ -16,12 +16,12 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml poetry.lock* /root/
-RUN pip install --no-cache-dir poetry
-RUN poetry config virtualenvs.create false
-RUN poetry lock
-RUN poetry install --no-root --only main
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:0.7.19 /uv /usr/local/bin/uv
 
-ENV PATH="$HOME/.local/bin:$PATH"
-ENV PYTHONPATH="${PYTHONPATH}:/root/"
+COPY pyproject.toml uv.lock* /workspace/
+RUN uv sync --frozen --no-install-project
+
+ENV PATH="/workspace/.venv/bin:$PATH"
+ENV PYTHONPATH="${PYTHONPATH}:/workspace/"
 ENV PYTHONPYCACHEPREFIX=/tmp/cpython/
