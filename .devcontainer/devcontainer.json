@@ -1,0 +1,30 @@
+{
+    "name": "Temporal Attention Survey",
+  
+    "build": {
+      "dockerfile": "Dockerfile",
+      "context": "..",
+      "args": {
+      "USERNAME": "${localEnv:USER}"
+      }
+    },
+    "customizations": {
+      "vscode": {
+        "extensions": [
+          "ms-python.vscode-pylance",
+          "ms-python.python",
+          "ms-vscode.cpptools-extension-pack",
+          "ms-vscode.cmake-tools",
+          "github.vscode-pull-request-github",
+          "tinkoff.nestor",
+          "ms-python.black-formatter",
+          "charliermarsh.ruff"
+        ]
+      }
+    },
+    "mounts": [
+      "source=${localEnv:HOME}/model-weights,target=/model-weights,type=bind,consistency=cached"
+    ],
+  
+    "runArgs": [ "--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined", "--gpus=all", "--shm-size=10g", "--ulimit", "stack=67108864" ],
+  }
