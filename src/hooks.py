@@ -76,8 +76,12 @@ class HookState:
         Если layer_idx ещё не встречался — сохранить клон и поставить счётчик 1.
         Если уже есть — прибавить inplace и увеличить счётчик.
         """
-        self._profiles.setdefault(layer_idx, profile.clone())
-        self._profiles[layer_idx] += profile
+        if layer_idx not in self._profiles:
+            self._profiles[layer_idx] = profile.clone()
+        else:
+            self._profiles[layer_idx] += profile
+
+        self._counts.setdefault(layer_idx, 0)
         self._counts[layer_idx] += 1
 
     @property
@@ -149,16 +153,16 @@ def _compute_temporal_profile_online(q: Tensor, k: Tensor, T: int, H: int, W: in
            - profile[:, dist] += attn_block.mean(dim=(0, -2, -1))
         3. Нормируй на T
     """
-    B, heads, HW, d = q.shape
-    q = q.reshape(B, heads, T, HW, d)
-    k = k.reshape(B, heads, T, HW, d)
+    B, heads, _, d = q.shape
+    q = q.reshape(B, heads, T, H*W, d)
+    k = k.reshape(B, heads, T, H*W, d)
     profile = torch.zeros(heads, 2 * T - 1)
     for t_q in range(T):
         for t_k in range(T):
-            dist = t_k - t_q + (T + 1)
+            dist = t_k - t_q + (T - 1)
             q_slice = q[:, :, t_q, :, :] # (B, heads, HW, d)
             k_slice = k[:, :, t_k, :, :] # (B, heads, HW, d)
-            scores = q_slice @ k_slice.T / d**0.5 # (B, heads, HW, HW)
+            scores = q_slice @ k_slice.transpose(-2, -1) / d**0.5 # (B, heads, HW, HW)
             attn_block = F.softmax(scores, dim=-1) # (B, heads, HW, HW)
             profile[:, dist] += attn_block.mean(dim=(0, -2, -1))
     return profile / T
@@ -190,7 +194,7 @@ def _patched_sdpa(
     logger.info(f"patched_sdpa: layer {_thread_local.temporal_layer_idx}")
     output = _original_sdpa(query, key, value, **kwargs)
     with torch.no_grad():
-        if not (_thread_local.temporal_layer_idx is not None and \
+        if not (getattr(_thread_local, "temporal_layer_idx", None) is not None and \
             _active_state.seq_len == query.shape[2]):
             return output
         profile = _compute_temporal_profile_online(
@@ -236,17 +240,18 @@ def register_temporal_hooks(model: Any, T: int, H: int, W: int) -> tuple[HookSta
            - добавить хэндлы в список.
         6. Вернуть (state, handles).
     """
+    global _original_sdpa, _active_state
     assert _original_sdpa is None, "hooks already registered"
     _original_sdpa = F.scaled_dot_product_attention
     F.scaled_dot_product_attention = _patched_sdpa
     _active_state = HookState(T, H, W)
     handles = []
     for i, block in enumerate(model.transformer_blocks):
-        def _pre_hook(module, input, output):
-            _thread_local.temporal_layer_idx = i
-        def _post_hook(module, input, output):
+        def _pre_hook(module: Any, input: Any, _i: int = i) -> None:
+            _thread_local.temporal_layer_idx = _i
+        def _post_hook(module: Any, input: Any, output: Any) -> None:
             _thread_local.temporal_layer_idx = None
-        handle = block.temporal_attn.register_forward_hook(_pre_hook)
+        handle = block.temporal_attn.register_forward_pre_hook(_pre_hook)
         handles.append(handle)
         handle = block.temporal_attn.register_forward_hook(_post_hook)
         handles.append(handle)
@@ -261,6 +266,7 @@ def remove_hooks(handles: list[Any]) -> None:
         2. Восстановить F.scaled_dot_product_attention из _original_sdpa.
         3. Обнулить _original_sdpa и _active_state.
     """
+    global _original_sdpa, _active_state
     for h in handles:
         h.remove()
     F.scaled_dot_product_attention = _original_sdpa
