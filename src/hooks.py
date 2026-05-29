@@ -257,9 +257,9 @@ def register_temporal_hooks(model: Any, T: int, H: int, W: int) -> tuple[HookSta
             _thread_local.temporal_layer_idx = _i
         def _post_hook(module: Any, input: Any, output: Any) -> None:
             _thread_local.temporal_layer_idx = None
-        handle = block.attn1.register_forward_pre_hook(_pre_hook)
+        handle = block.register_forward_pre_hook(_pre_hook)
         handles.append(handle)
-        handle = block.attn1.register_forward_hook(_post_hook)
+        handle = block.register_forward_hook(_post_hook)
         handles.append(handle)
     return _active_state, handles
 
