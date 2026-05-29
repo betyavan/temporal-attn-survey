@@ -28,7 +28,6 @@ src/hooks.py — forward hooks for CogVideoX temporal attention.
 
 from __future__ import annotations
 
-from math import log
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -122,7 +121,7 @@ def temporal_distance_profile(attn_weights: Tensor, T: int, H: int, W: int) -> T
           В конце нормируй на T.
     """
     heads = attn_weights.shape[0]
-    profile = torch.zeros(heads, 2 * T - 1)
+    profile = torch.zeros(heads, 2 * T - 1, device=attn_weights.device, dtype=torch.float32)
     for t_q in range(T):
         for t_k in range(T):
             dist = t_k - t_q + (T - 1)
@@ -154,9 +153,9 @@ def _compute_temporal_profile_online(q: Tensor, k: Tensor, T: int, H: int, W: in
         3. Нормируй на T
     """
     B, heads, _, d = q.shape
-    q = q.reshape(B, heads, T, H*W, d)
-    k = k.reshape(B, heads, T, H*W, d)
-    profile = torch.zeros(heads, 2 * T - 1)
+    q = q.reshape(B, heads, T, H * W, d).float()
+    k = k.reshape(B, heads, T, H * W, d).float()
+    profile = torch.zeros(heads, 2 * T - 1, device=q.device, dtype=torch.float32)
     for t_q in range(T):
         for t_k in range(T):
             dist = t_k - t_q + (T - 1)
@@ -191,7 +190,7 @@ def _patched_sdpa(
           Оборачивай шаг 2 в torch.no_grad() и .detach() для query/key.
     """
     assert _original_sdpa is not None, "hooks not registered"
-    logger.info(f"patched_sdpa: layer {_thread_local.temporal_layer_idx}")
+    logger.info("patched_sdpa: layer %s", getattr(_thread_local, "temporal_layer_idx", None))
     output = _original_sdpa(query, key, value, **kwargs)
     with torch.no_grad():
         if not (getattr(_thread_local, "temporal_layer_idx", None) is not None and \
@@ -241,7 +240,8 @@ def register_temporal_hooks(model: Any, T: int, H: int, W: int) -> tuple[HookSta
         6. Вернуть (state, handles).
     """
     global _original_sdpa, _active_state
-    assert _original_sdpa is None, "hooks already registered"
+    if _original_sdpa is not None:
+        raise RuntimeError("hooks already registered; call remove_hooks() first")
     _original_sdpa = F.scaled_dot_product_attention
     F.scaled_dot_product_attention = _patched_sdpa
     _active_state = HookState(T, H, W)
