@@ -5,7 +5,7 @@ src/hooks.py — forward hooks for CogVideoX temporal attention.
 материализации полной матрицы (T*H*W, T*H*W) — она не влезает в память.
 
 Ключевые факты:
-- CogVideoX-5B: 42 блока, каждый с temporal_attn (inter-frame) и attn1 (intra-frame)
+- CogVideoX-5B: 42 блока, каждый с attn1 (full 3D unified attention, spatial+temporal)
 - При 49 кадрах 480×720: T=13, H=60, W=90 → 70 200 токенов
 - Flash Attention не возвращает веса → нужен monkey-patch F.scaled_dot_product_attention
 - Профиль агрегируется на лету в (heads, 2T-1), полная матрица нигде не хранится
@@ -193,18 +193,24 @@ def _patched_sdpa(
     logger.info("patched_sdpa: layer %s", getattr(_thread_local, "temporal_layer_idx", None))
     output = _original_sdpa(query, key, value, **kwargs)
     with torch.no_grad():
-        if not (getattr(_thread_local, "temporal_layer_idx", None) is not None and \
-            _active_state.seq_len == query.shape[2]):
+        layer_idx = getattr(_thread_local, "temporal_layer_idx", None)
+        if layer_idx is None:
             return output
+        video_len = _active_state.seq_len  # T*H*W
+        if query.shape[2] < video_len:
+            return output
+        # CogVideoX single-stream: text tokens precede video tokens in the sequence
+        q_video = query.detach()[:, :, -video_len:, :]
+        k_video = key.detach()[:, :, -video_len:, :]
         profile = _compute_temporal_profile_online(
-            q=query.detach(),
-            k=key.detach(),
+            q=q_video,
+            k=k_video,
             T=_active_state.T,
             H=_active_state.H,
             W=_active_state.W,
         )
         _active_state._accumulate(
-            layer_idx=_thread_local.temporal_layer_idx,
+            layer_idx=layer_idx,
             profile=profile,
         )
     return output
@@ -251,9 +257,9 @@ def register_temporal_hooks(model: Any, T: int, H: int, W: int) -> tuple[HookSta
             _thread_local.temporal_layer_idx = _i
         def _post_hook(module: Any, input: Any, output: Any) -> None:
             _thread_local.temporal_layer_idx = None
-        handle = block.temporal_attn.register_forward_pre_hook(_pre_hook)
+        handle = block.attn1.register_forward_pre_hook(_pre_hook)
         handles.append(handle)
-        handle = block.temporal_attn.register_forward_hook(_post_hook)
+        handle = block.attn1.register_forward_hook(_post_hook)
         handles.append(handle)
     return _active_state, handles
 
