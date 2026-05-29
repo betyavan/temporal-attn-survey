@@ -6,7 +6,7 @@ src/hooks.py — forward hooks for CogVideoX temporal attention.
 
 Ключевые факты:
 - CogVideoX-5B: 42 блока, каждый с attn1 (full 3D unified attention, spatial+temporal)
-- При 49 кадрах 480×720: T=13, H=60, W=90 → 70 200 токенов
+- При 49 кадрах 480×720: после VAE T=13, H=60, W=90; после patch_size=2: T=13, H=30, W=45 → 17 550 видео-токенов + ~226 текстовых
 - Flash Attention не возвращает веса → нужен monkey-patch F.scaled_dot_product_attention
 - Профиль агрегируется на лету в (heads, 2T-1), полная матрица нигде не хранится
 
