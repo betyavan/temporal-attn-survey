@@ -62,8 +62,11 @@ class HookState:
     T: int
     H: int
     W: int
+    every_n_steps: int = 5  # собирать профиль только каждые N шагов денойзинга
     _profiles: dict[int, Tensor] = field(default_factory=dict, repr=False, init=False)
     _counts: dict[int, int] = field(default_factory=dict, repr=False, init=False)
+    _step: int = field(default=0, repr=False, init=False)
+    _collecting: bool = field(default=False, repr=False, init=False)
 
     @property
     def seq_len(self) -> int:
@@ -98,6 +101,8 @@ class HookState:
         """
         self._profiles.clear()
         self._counts.clear()
+        self._step = 0
+        self._collecting = False
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +201,12 @@ def _patched_sdpa(
         layer_idx = getattr(_thread_local, "temporal_layer_idx", None)
         if layer_idx is None:
             return output
+        # layer_idx==0 означает начало нового шага денойзинга
+        if layer_idx == 0:
+            _active_state._collecting = (_active_state._step % _active_state.every_n_steps == 0)
+            _active_state._step += 1
+        if not _active_state._collecting:
+            return output
         video_len = _active_state.seq_len  # T*H*W
         if query.shape[2] < video_len:
             return output
@@ -221,7 +232,7 @@ def _patched_sdpa(
 # ---------------------------------------------------------------------------
 
 
-def register_temporal_hooks(model: Any, T: int, H: int, W: int) -> tuple[HookState, list[Any]]:
+def register_temporal_hooks(model: Any, T: int, H: int, W: int, every_n_steps: int = 5) -> tuple[HookState, list[Any]]:
     """Запатчить SDPA и зарегистрировать pre/post хуки на каждый temporal_attn.
 
     Args:
@@ -250,7 +261,7 @@ def register_temporal_hooks(model: Any, T: int, H: int, W: int) -> tuple[HookSta
         raise RuntimeError("hooks already registered; call remove_hooks() first")
     _original_sdpa = F.scaled_dot_product_attention
     F.scaled_dot_product_attention = _patched_sdpa
-    _active_state = HookState(T, H, W)
+    _active_state = HookState(T, H, W, every_n_steps=every_n_steps)
     handles = []
     for i, block in enumerate(model.transformer_blocks):
         def _pre_hook(module: Any, input: Any, _i: int = i) -> None:
@@ -281,9 +292,9 @@ def remove_hooks(handles: list[Any]) -> None:
 
 
 @contextmanager
-def temporal_hook_context(model: Any, T: int, H: int, W: int) -> Generator[HookState, None, None]:
+def temporal_hook_context(model: Any, T: int, H: int, W: int, every_n_steps: int = 5) -> Generator[HookState, None, None]:
     """Контекстный менеджер: register_temporal_hooks на входе, remove_hooks на выходе."""
-    state, handles = register_temporal_hooks(model, T, H, W)
+    state, handles = register_temporal_hooks(model, T, H, W, every_n_steps=every_n_steps)
     try:
         yield state
     finally:
