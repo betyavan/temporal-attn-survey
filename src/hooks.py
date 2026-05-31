@@ -136,13 +136,16 @@ def temporal_distance_profile(attn_weights: Tensor, T: int, H: int, W: int) -> T
             profile[:, dist] += attn_block.mean(dim=(-1, -2)) # (heads, 1)
     return profile / T
 
+_SPATIAL_STRIDE = 4  # субдискретизация пространственных позиций для ускорения
+
+
 def _compute_temporal_profile_online(q: Tensor, k: Tensor, T: int, H: int, W: int) -> Tensor:
     """Вычислить temporal_distance_profile без материализации полной матрицы.
 
-    Для каждого запросного кадра t_q считает softmax по ВСЕМ T*H*W ключам
-    (2-проходный онлайн-алгоритм), затем суммирует внимание по каждому кадру t_k.
-    Пиковая память O(B * heads * H*W * H*W) за один кадр — полная матрица T*HW × T*HW
-    не материализуется.
+    Для каждого запросного кадра t_q считает softmax по всем T ключевым кадрам
+    одним батчем (1 матмул на t_q), затем суммирует внимание по каждому t_k.
+    Пространственные позиции субдискретизируются (_SPATIAL_STRIDE) чтобы
+    уложиться в память без ущерба для временно́го профиля.
 
     Args:
         q, k: (B, heads, T*H*W, d) — query и key из temporal_attn
@@ -157,30 +160,26 @@ def _compute_temporal_profile_online(q: Tensor, k: Tensor, T: int, H: int, W: in
     q = q.reshape(B, heads, T, HW, d).float()
     k = k.reshape(B, heads, T, HW, d).float()
     scale = d ** -0.5
+
+    # Субдискретизация по пространству: профиль усредняется по позициям,
+    # поэтому случайная выборка позиций даёт тот же результат при меньшей памяти.
+    idx = torch.arange(0, HW, _SPATIAL_STRIDE, device=q.device)
+    q = q[:, :, :, idx, :]  # (B, heads, T, HW', d)
+    k = k[:, :, :, idx, :]
+    HW_sub = len(idx)
+
+    k_all = k.reshape(B, heads, T * HW_sub, d)  # (B, heads, T*HW', d) — все ключи
     profile = torch.zeros(heads, 2 * T - 1, device=q.device, dtype=torch.float32)
 
     for t_q in range(T):
-        q_slice = q[:, :, t_q]  # (B, heads, HW, d)
-
-        # Проход 1: онлайн-аккумуляция max и sum_exp по ВСЕМ T*HW ключам.
-        # Нужно для численно-стабильного softmax без хранения всех scores сразу.
-        running_max = torch.full((B, heads, HW), float("-inf"), device=q.device, dtype=torch.float32)
-        running_sum_exp = torch.zeros(B, heads, HW, device=q.device, dtype=torch.float32)
-        for t_k in range(T):
-            scores = q_slice @ k[:, :, t_k].transpose(-2, -1) * scale  # (B, heads, HW, HW)
-            frame_max = scores.max(dim=-1).values  # (B, heads, HW)
-            new_max = torch.maximum(running_max, frame_max)
-            running_sum_exp = running_sum_exp * torch.exp(running_max - new_max) + \
-                torch.exp(scores - new_max.unsqueeze(-1)).sum(dim=-1)
-            running_max = new_max
-
-        # Проход 2: для каждого t_k пересчитываем scores → доля внимания на кадр.
-        # numerator / running_sum_exp = реальная доля внимания (softmax по T*HW ключам).
+        q_slice = q[:, :, t_q]  # (B, heads, HW', d)
+        # Один матмул: scores по ВСЕМ T*HW' ключам → корректный softmax
+        scores = q_slice @ k_all.transpose(-2, -1) * scale  # (B, heads, HW', T*HW')
+        attn = F.softmax(scores, dim=-1)
         for t_k in range(T):
             dist = t_k - t_q + (T - 1)
-            scores = q_slice @ k[:, :, t_k].transpose(-2, -1) * scale  # (B, heads, HW, HW)
-            numerator = torch.exp(scores - running_max.unsqueeze(-1)).sum(dim=-1)  # (B, heads, HW)
-            attn_mass = (numerator / running_sum_exp).mean(dim=(0, -1))  # (heads,)
+            s, e = t_k * HW_sub, (t_k + 1) * HW_sub
+            attn_mass = attn[:, :, :, s:e].sum(dim=-1).mean(dim=(0, -1))  # (heads,)
             profile[:, dist] += attn_mass
 
     return profile / T
