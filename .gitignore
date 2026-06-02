@@ -3,3 +3,4 @@
 *.lock
 .venv
 solutions/
+**/__pycache__/

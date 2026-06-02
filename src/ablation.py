@@ -230,6 +230,7 @@ def run_ablation(
         save_dir.mkdir(parents=True, exist_ok=True)
     for i, prompt in enumerate(prompts[:n_videos]):
         gen = torch.Generator("cpu").manual_seed(seed + i)
+        n_base = _targeted_norm(model, targets)  # должна быть >0 и одинаковой каждый промпт
         baseline = pipe(prompt, num_frames=num_frames, generator=gen).frames[0]
         _save_video(baseline, save_dir, f"{tag}p{i}_baseline", fps)
         metrics["baseline"].append({
@@ -238,13 +239,35 @@ def run_ablation(
         })
         gen = torch.Generator("cpu").manual_seed(seed + i)  # тот же шум, что и baseline
         with ablated_heads(model, targets):
+            n_abl = _targeted_norm(model, targets)  # должна быть ~0 (головы занулены)
             ablated = pipe(prompt, num_frames=num_frames, generator=gen).frames[0]
             _save_video(ablated, save_dir, f"{tag}p{i}_ablated", fps)
             metrics["ablated"].append({
                 "motion_score": motion_score(ablated),
                 "temporal_consistency": temporal_consistency(ablated, clip_model, clip_preprocess),
             })
+        print(f"      [p{i}] ‖to_out_targeted‖: baseline={n_base:.3f} ablated={n_abl:.3f}")
+        if n_base < 1e-6:
+            print(f"      ⚠️  baseline-норма ≈0 на p{i}: restore НЕ сработал (веса остались занулены)")
     return metrics
+
+
+def _targeted_norm(model: Any, targets: list[LayerHeads]) -> float:
+    """L2-норма всех зануляемых столбцов `to_out` суммарно — диагностика restore.
+
+    Перед baseline-генерацией должна быть >0 и стабильной от промпта к промпту;
+    внутри ablated_heads — ≈0. Если перед baseline она ≈0, головы остались
+    занулены с прошлого промпта (restore не сработал в этом окружении, напр.
+    из-за cpu-offload).
+    """
+    total = 0.0
+    for layer_idx, head_indices in targets:
+        attn = getattr(model.transformer_blocks[layer_idx], ATTN_MODULE)
+        w = attn.to_out[0].weight.data
+        head_dim = w.shape[1] // attn.heads
+        for h in head_indices:
+            total += float(w[:, h * head_dim : (h + 1) * head_dim].float().norm() ** 2)
+    return total**0.5
 
 
 def _save_video(frames: list[Any], save_dir: Path | None, name: str, fps: int) -> None:
