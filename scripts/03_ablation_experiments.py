@@ -26,7 +26,7 @@ from omegaconf import OmegaConf
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.ablation import HYPOTHESES, ablated_heads, run_ablation, summarize_ablation  # noqa: E402
+from src.ablation import HYPOTHESES, run_ablation, summarize_ablation  # noqa: E402
 from src.metrics import load_clip_model  # noqa: E402
 
 MODEL = os.environ.get("COGVIDEOX_PATH", "THUDM/CogVideoX-5b")
@@ -44,21 +44,6 @@ def load_pipeline(cpu_offload: bool) -> Any:
     pipe.enable_model_cpu_offload() if cpu_offload else pipe.to(DEVICE)
     pipe.vae.enable_tiling()
     return pipe
-
-
-def render_pair(pipe: Any, prompt: str, targets: list[tuple[int, list[int]]], fps: int, name: str) -> None:
-    """baseline и ablated mp4 на один промпт; один seed -> разница только в аблации."""
-    from diffusers.utils import export_to_video
-
-    out = RESULTS / "ablation_videos"
-    out.mkdir(parents=True, exist_ok=True)
-
-    baseline = pipe(prompt, num_frames=NUM_FRAMES, generator=torch.manual_seed(SEED)).frames[0]
-    export_to_video(baseline, str(out / f"{name}_baseline.mp4"), fps=fps)
-    with ablated_heads(pipe.transformer, targets):
-        ablated = pipe(prompt, num_frames=NUM_FRAMES, generator=torch.manual_seed(SEED)).frames[0]
-    export_to_video(ablated, str(out / f"{name}_ablated.mp4"), fps=fps)
-    print(f"      видео -> {out}/{name}_{{baseline,ablated}}.mp4")
 
 
 def fmt_targets(targets: list[tuple[int, list[int]]]) -> str:
@@ -124,6 +109,8 @@ def main() -> None:
         raw = run_ablation(
             pipe, prompts, hyp.targets, clip_model, preprocess,
             num_frames=NUM_FRAMES, n_videos=args.n_videos, seed=SEED,
+            save_dir=(RESULTS / "ablation_videos") if args.save_videos else None,
+            fps=fps, tag=f"{name}_",
         )
         summaries[name] = summarize_ablation(raw)
         report[name] = {"targets": [[lyr, h] for lyr, h in hyp.targets], "summary": summaries[name], "raw": raw}
@@ -131,8 +118,6 @@ def main() -> None:
             f"      motion {summaries[name]['motion_score_delta_pct']:+.1f}% | "
             f"consistency {summaries[name]['temporal_consistency_delta_pct']:+.1f}%\n"
         )
-        if args.save_videos:
-            render_pair(pipe, prompts[0], hyp.targets, fps, name)
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     (RESULTS / "metrics.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")

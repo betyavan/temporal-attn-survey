@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Generator
 from collections import defaultdict
 
@@ -183,6 +184,9 @@ def run_ablation(
     num_frames: int = 49,
     n_videos: int = 10,
     seed: int = 0,
+    save_dir: Path | None = None,
+    fps: int = 8,
+    tag: str = "",
 ) -> dict[str, list[dict[str, float]]]:
     """Сгенерировать baseline и ablated видео, посчитать метрики на каждом.
 
@@ -197,6 +201,11 @@ def run_ablation(
         seed:            ОДИН и тот же seed на промпт для baseline и ablated —
                          тогда единственное отличие между ними это аблация
                          (низкодисперсные дельты).
+        save_dir:        если задан — кадры пишутся в .mp4 сразу после генерации
+                         (без повторного прохода пайплайна), файлы
+                         {save_dir}/{tag}p{i}_{baseline,ablated}.mp4.
+        fps:             частота кадров для export_to_video.
+        tag:             префикс имён файлов (обычно имя гипотезы).
 
     Returns:
         {"baseline": [{"motion_score": .., "temporal_consistency": ..}, ...],
@@ -217,9 +226,12 @@ def run_ablation(
     """
     metrics: dict[str, list[dict[str, float]]] = defaultdict(list)
     model = pipe.transformer
+    if save_dir is not None:
+        save_dir.mkdir(parents=True, exist_ok=True)
     for i, prompt in enumerate(prompts[:n_videos]):
         gen = torch.Generator("cpu").manual_seed(seed + i)
         baseline = pipe(prompt, num_frames=num_frames, generator=gen).frames[0]
+        _save_video(baseline, save_dir, f"{tag}p{i}_baseline", fps)
         metrics["baseline"].append({
             "motion_score": motion_score(baseline),
             "temporal_consistency": temporal_consistency(baseline, clip_model, clip_preprocess),
@@ -227,11 +239,23 @@ def run_ablation(
         gen = torch.Generator("cpu").manual_seed(seed + i)  # тот же шум, что и baseline
         with ablated_heads(model, targets):
             ablated = pipe(prompt, num_frames=num_frames, generator=gen).frames[0]
+            _save_video(ablated, save_dir, f"{tag}p{i}_ablated", fps)
             metrics["ablated"].append({
                 "motion_score": motion_score(ablated),
                 "temporal_consistency": temporal_consistency(ablated, clip_model, clip_preprocess),
             })
     return metrics
+
+
+def _save_video(frames: list[Any], save_dir: Path | None, name: str, fps: int) -> None:
+    """Записать кадры в {save_dir}/{name}.mp4; no-op если save_dir не задан."""
+    if save_dir is None:
+        return
+    from diffusers.utils import export_to_video
+
+    path = save_dir / f"{name}.mp4"
+    export_to_video(frames, str(path), fps=fps)
+    print(f"      видео -> {path}")
 
 
 def _mean(values: list[float]) -> float:
