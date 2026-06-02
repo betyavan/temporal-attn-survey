@@ -33,8 +33,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Generator
+from collections import defaultdict
 
+import torch
 from torch import Tensor
+from src.metrics import temporal_consistency, motion_score
 
 # --- Геометрия CogVideoX-5B -------------------------------------------------
 NUM_LAYERS = 42
@@ -121,7 +124,15 @@ def zero_out_heads(model: Any, layer_idx: int, head_indices: list[int]) -> dict[
 
     TODO: реализовать. Клонируй ДО зануления, иначе сохранишь нули.
     """
-    raise NotImplementedError
+    saved = dict()
+    block = model.transformer_blocks[layer_idx]
+    attn = getattr(block, ATTN_MODULE)
+    head_dim = attn.to_out[0].weight.shape[1] // attn.heads
+    for h in head_indices:
+        start, end = h*head_dim, (h+1)*head_dim
+        saved[h] = attn.to_out[0].weight.data[:, start:end].clone()
+        attn.to_out[0].weight.data[:, start:end] = 0
+    return saved
 
 
 def restore_heads(model: Any, layer_idx: int, saved: dict[int, Tensor]) -> None:
@@ -130,7 +141,12 @@ def restore_heads(model: Any, layer_idx: int, saved: dict[int, Tensor]) -> None:
     TODO: для каждого (head_idx, weights) положить weights обратно в тот же
           слайс [head_idx*head_dim : (head_idx+1)*head_dim] того же attn.to_out[0].
     """
-    raise NotImplementedError
+    block = model.transformer_blocks[layer_idx]
+    attn = getattr(block, ATTN_MODULE)
+    head_dim = attn.to_out[0].weight.shape[1] // attn.heads
+    for h, weights in saved.items():
+        start, end = h*head_dim, (h+1)*head_dim
+        attn.to_out[0].weight.data[:, start:end] = weights.clone()
 
 
 @contextmanager
@@ -199,7 +215,28 @@ def run_ablation(
 
     TODO: реализовать по протоколу выше.
     """
-    raise NotImplementedError
+    metrics: dict[str, list[dict[str, float]]] = defaultdict(list)
+    model = pipe.transformer
+    for i, prompt in enumerate(prompts[:n_videos]):
+        gen = torch.Generator("cpu").manual_seed(seed + i)
+        baseline = pipe(prompt, num_frames=num_frames, generator=gen).frames[0]
+        metrics["baseline"].append({
+            "motion_score": motion_score(baseline),
+            "temporal_consistency": temporal_consistency(baseline, clip_model, clip_preprocess),
+        })
+        gen = torch.Generator("cpu").manual_seed(seed + i)  # тот же шум, что и baseline
+        with ablated_heads(model, targets):
+            ablated = pipe(prompt, num_frames=num_frames, generator=gen).frames[0]
+            metrics["ablated"].append({
+                "motion_score": motion_score(ablated),
+                "temporal_consistency": temporal_consistency(ablated, clip_model, clip_preprocess),
+            })
+    return metrics
+
+
+def _mean(values: list[float]) -> float:
+    """Среднее по списку метрик; nan для пустого (усреднять нечего)."""
+    return float(sum(values) / len(values)) if values else float("nan")
 
 
 def summarize_ablation(results: dict[str, list[dict[str, float]]]) -> dict[str, float]:
@@ -211,6 +248,20 @@ def summarize_ablation(results: dict[str, list[dict[str, float]]]) -> dict[str, 
          "temporal_consistency_baseline": .., "..._ablated": .., "..._delta_pct": ..}
         где delta_pct = (ablated_mean - baseline_mean) / baseline_mean * 100.
 
-    TODO: усреднить по списку для каждой метрики и посчитать дельты в %.
+    Пустой список метрик → nan; baseline_mean == 0 → delta_pct = nan
+    (например, near_static, где motion_score ≈ 0).
     """
-    raise NotImplementedError
+    summary: dict[str, float] = {}
+    for metric in ("motion_score", "temporal_consistency"):
+        baseline_mean = _mean([row[metric] for row in results["baseline"]])
+        ablated_mean = _mean([row[metric] for row in results["ablated"]])
+
+        if baseline_mean == 0.0:
+            delta_pct = float("nan")
+        else:
+            delta_pct = (ablated_mean - baseline_mean) / baseline_mean * 100.0
+
+        summary[f"{metric}_baseline"] = baseline_mean
+        summary[f"{metric}_ablated"] = ablated_mean
+        summary[f"{metric}_delta_pct"] = delta_pct
+    return summary
