@@ -246,9 +246,9 @@ def run_ablation(
                 "motion_score": motion_score(ablated),
                 "temporal_consistency": temporal_consistency(ablated, clip_model, clip_preprocess),
             })
-        print(f"      [p{i}] ‖to_out_targeted‖: baseline={n_base:.3f} ablated={n_abl:.3f}")
+        print(f"      [p{i}] ‖to_out_targeted‖: baseline={n_base:.3f} ablated={n_abl:.3f}", flush=True)
         if n_base < 1e-6:
-            print(f"      ⚠️  baseline-норма ≈0 на p{i}: restore НЕ сработал (веса остались занулены)")
+            print(f"      ⚠️  baseline-норма ≈0 на p{i}: restore НЕ сработал (веса остались занулены)", flush=True)
     return metrics
 
 
