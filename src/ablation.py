@@ -230,7 +230,10 @@ def run_ablation(
         save_dir.mkdir(parents=True, exist_ok=True)
     for i, prompt in enumerate(prompts[:n_videos]):
         gen = torch.Generator("cpu").manual_seed(seed + i)
-        n_base = _targeted_norm(model, targets)  # должна быть >0 и одинаковой каждый промпт
+        n_base = _targeted_norm(model, targets)
+        print(f"      [p{i}] baseline ‖to_out_targeted‖={n_base:.3f}", flush=True)
+        if n_base < 1e-6:
+            print(f"      ⚠️  baseline-норма ≈0: restore с прошлого промпта не сработал!", flush=True)
         baseline = pipe(prompt, num_frames=num_frames, generator=gen).frames[0]
         _save_video(baseline, save_dir, f"{tag}p{i}_baseline", fps)
         metrics["baseline"].append({
@@ -239,16 +242,14 @@ def run_ablation(
         })
         gen = torch.Generator("cpu").manual_seed(seed + i)  # тот же шум, что и baseline
         with ablated_heads(model, targets):
-            n_abl = _targeted_norm(model, targets)  # должна быть ~0 (головы занулены)
+            n_abl = _targeted_norm(model, targets)
+            print(f"      [p{i}] ablated  ‖to_out_targeted‖={n_abl:.3f}", flush=True)
             ablated = pipe(prompt, num_frames=num_frames, generator=gen).frames[0]
             _save_video(ablated, save_dir, f"{tag}p{i}_ablated", fps)
             metrics["ablated"].append({
                 "motion_score": motion_score(ablated),
                 "temporal_consistency": temporal_consistency(ablated, clip_model, clip_preprocess),
             })
-        print(f"      [p{i}] ‖to_out_targeted‖: baseline={n_base:.3f} ablated={n_abl:.3f}", flush=True)
-        if n_base < 1e-6:
-            print(f"      ⚠️  baseline-норма ≈0 на p{i}: restore НЕ сработал (веса остались занулены)", flush=True)
     return metrics
 
 
